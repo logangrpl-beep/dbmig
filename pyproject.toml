@@ -1,0 +1,17 @@
+[project]
+name = "dbmig"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "pyyaml>=6.0.3",
+]
+
+[dependency-groups]
+dev = [
+    "delta-spark>=4.4,<4.5",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]

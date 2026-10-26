@@ -1,0 +1,73 @@
+# Machine-readable expected results for the scenario in design/test_spec.md.
+# Used by src/validate.py (from tests and from notebooks/run_pipeline.py).
+# Values are compared as strings: timestamps "YYYY-MM-DD HH:MM:SS", dates
+# "YYYY-MM-DD", booleans "true"/"false", decimals as written.
+#
+# Check kinds per load_date:
+#   counts       [{id, table, expected}]                     C1-C3
+#   rejected     total rejects for the load_date             C4
+#   load_log     {table: {metric: value}} on the first SUCCESS run of that table+date  C6/F3
+#   sums         [{id, table, column, expected}]             C7
+#   values       [{id, table, key, expect: {col: value}}]    D*/M*/P*
+#   absent       [{id, table, key}]                          P2/R3
+#   key_set      [{id, table, keys: [...]}]                  P1
+#   rejects      [{id, table, source_row, reason}]           R1/R2
+#   fk           [{id, table, fk, expected}]                 F1/F2
+
+"2026-01-01":
+  counts:
+    - {id: C1, table: customers, expected: 5}
+    - {id: C2, table: products, expected: 4}
+    - {id: C3, table: orders, expected: 8}
+  rejected: 2
+  load_log:
+    customers: {rows_read: 7, rows_rejected: 1, duplicates_removed: 1, rows_inserted: 5, rows_updated: 0, rows_stale: 0}
+    products:  {rows_read: 5, rows_rejected: 0, duplicates_removed: 1, rows_inserted: 4}
+    orders:    {rows_read: 11, rows_rejected: 1, duplicates_removed: 2, rows_inserted: 8, rows_updated: 0, rows_stale: 0, fk_violations: 0}
+  sums:
+    - {id: C7, table: orders, column: quantity, expected: "19"}
+  values:
+    - {id: D1, table: customers, key: {customer_id: 3}, expect: {email: carol@new.com}}
+    - {id: D2, table: products, key: {product_id: P002}, expect: {unit_price: "24.99"}}
+    - {id: D3, table: orders, key: {order_id: 1003}, expect: {order_status: SHIPPED}}
+  absent:
+    - {id: R3, table: orders, key: {order_id: 1099}}
+  rejects:
+    - {id: R1, table: customers, source_row: 7, reason: "not_null:customer_id"}
+    - {id: R2, table: orders, source_row: 11, reason: "allowed_values:order_status"}
+  fk:
+    - {id: F1, table: orders, fk: "customer_id->customers.customer_id", expected: 0}
+    - {id: F2, table: orders, fk: "product_id->products.product_id", expected: 0}
+
+"2026-01-02":
+  counts:
+    - {id: C1, table: customers, expected: 7}
+    - {id: C2, table: products, expected: 4}
+    - {id: C3, table: orders, expected: 12}
+  rejected: 0
+  load_log:
+    customers: {rows_read: 4, rows_rejected: 0, duplicates_removed: 0, rows_inserted: 2, rows_updated: 1, rows_stale: 1}
+    products:  {rows_read: 4, rows_rejected: 0, duplicates_removed: 0, rows_inserted: 4}
+    orders:    {rows_read: 6, rows_rejected: 0, duplicates_removed: 0, rows_inserted: 4, rows_updated: 2, rows_stale: 0, fk_violations: 1}
+  sums:
+    - {id: C7, table: orders, column: quantity, expected: "26"}
+  values:
+    - {id: D1, table: customers, key: {customer_id: 3}, expect: {email: carol@new.com}}
+    - {id: M1, table: customers, key: {customer_id: 2}, expect: {email: bob@new.com, updated_at: "2026-01-02 09:00:00"}}
+    - {id: M2, table: customers, key: {customer_id: 4}, expect: {email: dan@ex.com, updated_at: "2025-12-01 12:00:00"}}
+    - {id: M3, table: customers, key: {customer_id: 6}, expect: {_load_date: "2026-01-02"}}
+    - {id: M3, table: customers, key: {customer_id: 7}, expect: {_load_date: "2026-01-02"}}
+    - {id: M4, table: customers, key: {customer_id: 1}, expect: {_load_date: "2026-01-01"}}
+    - {id: M4, table: customers, key: {customer_id: 3}, expect: {_load_date: "2026-01-01"}}
+    - {id: M4, table: customers, key: {customer_id: 5}, expect: {_load_date: "2026-01-01"}}
+    - {id: M5, table: orders, key: {order_id: 1002}, expect: {order_status: DELIVERED}}
+    - {id: M5, table: orders, key: {order_id: 1003}, expect: {order_status: DELIVERED}}
+    - {id: P3, table: products, key: {product_id: P002}, expect: {unit_price: "21.99"}}
+  absent:
+    - {id: P2, table: products, key: {product_id: P004}}
+    - {id: R3, table: orders, key: {order_id: 1099}}
+  key_set:
+    - {id: P1, table: products, keys: [P001, P002, P003, P005]}
+  fk:
+    - {id: F1, table: orders, fk: "customer_id->customers.customer_id", expected: 0}
+    - {id: F2, table: orders, fk: "product_id->products.product_id", expected: 1}

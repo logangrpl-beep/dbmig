@@ -1,0 +1,114 @@
+# dbmig table design — single source of truth for all table behaviour.
+# Build-phase code must be generic and driven entirely by this file (no per-table code).
+#
+# Placeholders resolved at runtime (never hardcode the catalog):
+#   ${catalog}    target Unity Catalog catalog (e.g. passed as --catalog / env DBMIG_CATALOG)
+#   ${load_date}  batch date being loaded, YYYY-MM-DD
+
+version: 1
+
+defaults:
+  source:
+    format: csv
+    # One folder per table per batch date inside the landing volume.
+    path: /Volumes/${catalog}/landing/raw/${table}/${load_date}/
+    options:
+      header: true
+      delimiter: ","
+      quote: '"'
+      escape: '"'
+      encoding: UTF-8
+      nullValue: ""
+      timestampFormat: "yyyy-MM-dd HH:mm:ss"
+      dateFormat: "yyyy-MM-dd"
+    # Columns in the CSV header that are not in the schema -> fail the load.
+    # Schema columns missing from the CSV header -> fail the load.
+    strict_header: true
+  target:
+    schema: bronze                # -> ${catalog}.bronze.<table>
+    format: delta
+  # Metadata columns added to every target table (not present in the CSV).
+  metadata_columns:
+    - {name: _source_file, type: STRING,    desc: "Full path of the CSV file the row came from"}
+    - {name: _source_row,  type: BIGINT,    desc: "1-based data row number within the file (header excluded)"}
+    - {name: _load_date,   type: DATE,      desc: "Batch date (${load_date})"}
+    - {name: _ingested_at, type: TIMESTAMP, desc: "Time the batch was written"}
+  # Dedupe: within a batch keep exactly one row per PK — the first row after sorting
+  # by order_by. Ties on the table's ordering column are broken by file/row position
+  # so the result is deterministic (later file / later row wins).
+  dedupe_tiebreak:
+    - {column: _source_file, direction: desc}
+    - {column: _source_row,  direction: desc}
+  # Rows that fail parsing, type casting, a nullable:false column, or allowed_values
+  # are not loaded; they are written to the rejects table with a reason.
+  # Rejects for a table + load_date are replaced (not appended) on re-run.
+  rejects_table: ops.rejected_rows   # -> ${catalog}.ops.rejected_rows
+  audit_table: ops.load_log          # -> ${catalog}.ops.load_log
+  # Re-running the same table + load_date must produce an identical target (idempotent).
+  idempotent: true
+
+# Load types (semantics the generic loader must implement):
+#   snapshot_overwrite : each batch is a full extract. Deduped batch replaces the
+#                        whole target table. Rows absent from the batch disappear.
+#   merge_upsert       : each batch is a delta. Deduped batch is MERGEd on the PK.
+#                        Matched rows are updated only if source.<ordering_column> >
+#                        target.<ordering_column> (late/stale rows are ignored).
+#                        Unmatched rows are inserted. Nothing is deleted.
+
+tables:
+
+  customers:
+    description: Customer master, delta extract of new/changed customers.
+    source:
+      file_pattern: "customers_*.csv"
+    primary_key: [customer_id]
+    load_type: merge_upsert
+    ordering_column: updated_at
+    columns:
+      - {name: customer_id, type: INT,           nullable: false}
+      - {name: email,       type: STRING,        nullable: false}
+      - {name: first_name,  type: STRING,        nullable: true}
+      - {name: last_name,   type: STRING,        nullable: true}
+      - {name: country,     type: STRING,        nullable: true, desc: "ISO 3166-1 alpha-2"}
+      - {name: created_at,  type: TIMESTAMP,     nullable: false}
+      - {name: updated_at,  type: TIMESTAMP,     nullable: false}
+
+  products:
+    description: Product catalogue, full extract every day.
+    source:
+      file_pattern: "products_*.csv"
+    primary_key: [product_id]
+    load_type: snapshot_overwrite
+    ordering_column: updated_at
+    columns:
+      - {name: product_id,  type: STRING,        nullable: false, desc: "e.g. P001"}
+      - {name: name,        type: STRING,        nullable: false}
+      - {name: category,    type: STRING,        nullable: true}
+      - {name: unit_price,  type: "DECIMAL(10,2)", nullable: false}
+      - {name: is_active,   type: BOOLEAN,       nullable: false}
+      - {name: updated_at,  type: TIMESTAMP,     nullable: false}
+
+  orders:
+    description: Order headers (one product per order), delta extract of new/changed orders.
+    source:
+      file_pattern: "orders_*.csv"
+    primary_key: [order_id]
+    load_type: merge_upsert
+    ordering_column: updated_at
+    columns:
+      - {name: order_id,     type: BIGINT,         nullable: false}
+      - {name: customer_id,  type: INT,            nullable: false}
+      - {name: product_id,   type: STRING,         nullable: false}
+      - {name: quantity,     type: INT,            nullable: false}
+      - {name: unit_price,   type: "DECIMAL(10,2)", nullable: false}
+      - {name: order_status, type: STRING,         nullable: false,
+         allowed_values: [PLACED, SHIPPED, DELIVERED, CANCELLED]}
+      - {name: order_ts,     type: TIMESTAMP,      nullable: false}
+      - {name: updated_at,   type: TIMESTAMP,      nullable: false}
+    # Checked after load; violations are reported in the load log (warning, not reject).
+    foreign_keys:
+      - {columns: [customer_id], references: {table: customers, columns: [customer_id]}}
+      - {columns: [product_id],  references: {table: products,  columns: [product_id]}}
+
+# Load order within a batch date (FK checks on orders need parents loaded first).
+load_order: [customers, products, orders]
