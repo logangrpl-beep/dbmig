@@ -1,0 +1,5 @@
+   CREATE CATALOG IF NOT EXISTS dbmig;
+   CREATE SCHEMA IF NOT EXISTS dbmig.landing;
+   CREATE SCHEMA IF NOT EXISTS dbmig.bronze;
+   CREATE SCHEMA IF NOT EXISTS dbmig.ops;
+   CREATE VOLUME IF NOT EXISTS dbmig.landing.raw;
